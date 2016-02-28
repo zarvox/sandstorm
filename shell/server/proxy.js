@@ -1546,12 +1546,47 @@ class Proxy {
         response.setHeader("Set-Cookie", rpcResponse.setCookies.map(makeSetCookieHeader));
       }
 
-      // TODO(security): Add a Content-Security-Policy header which:
-      // (1) Prevents the app from initiating HTTP requests to third parties.
-      // (2) Prevents the app from navigating the parent frame.
-      // (3) Prevents the app from opening popups.
-      // (4) Prohibits anyone other than the Sandstorm shell from framing the app (as a backup
-      //   defense vs. clickjacking, though unguessable hostnames already mostly prevent this).
+      // Add a Content-Security-Policy header which:
+      // (1) Allows the app to load resources from itself, including inline
+      //     script and styles.
+      // (2) Allows the app to connect back to itself over websockets.
+      // (3) Allows the app to frame itself (in case the app uses frames) and the
+      //     shell (for things like token templating).
+      // (4) Prevents the app from initiating HTTP requests to third parties.
+      // (5) Prevents the app from navigating the parent frame. (no allow-top-navigation)
+      // (6) Prevents the app from opening popups. (no allow-popups)
+      // (7) Prevents the app from locking the pointer (no allow-pointer-lock)
+      // (8) Disables sending referrer when fetching or navigating to other resources.
+      const ROOT_URL = Url.parse(process.env.ROOT_URL);
+      let wsProtocol = undefined;
+      if (ROOT_URL.protocol == "https") {
+        wsProtocol = "wss";
+      } else {
+        wsProtocol = "ws";
+      }
+
+      const grainHost = makeWildcardHost(this.hostId);
+      const cspRule = [
+        "default-src 'self' " + wsProtocol + "://" + grainHost,
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+        "img-src data: 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "frame-src 'self' " + ROOT_URL.host,
+        "sandbox allow-forms allow-scripts",
+        "referrer no-referrer",
+      ].join(" ; ");
+      // The standard header name is Content-Security-Policy.
+      response.setHeader("Content-Security-Policy", cspRule);
+      // IE 10 and 11 require the X- prefix for CSP.
+      response.setHeader("X-Content-Security-Policy", cspRule);
+      // Some versions of Safari and the Blackberry browser only handle this
+      // header under the name X-Webkit-CSP.
+      response.setHeader("X-Webkit-CSP", cspRule);
+
+      // Add an X-Frame-Options: header which prohibits anyone other than the
+      // Sandstorm shell from framing the app (as a backup defense vs.
+      // clickjacking, though unguessable hostnames already mostly prevent this).
+      response.setHeader("X-Frame-Options", "allow-from " + ROOT_URL.href);
     } else {
       // jscs:disable validateQuoteMarks
       // This is an API request. Cookies are not supported.
@@ -1565,6 +1600,10 @@ class Proxy {
       // Add a Content-Security-Policy as a backup in case someone finds a way to load this resource
       // in a browser context. This policy should thoroughly neuter it.
       response.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+      const cspRule = "default-src 'none'; sandbox";
+      response.setHeader("Content-Security-Policy", cspRule);
+      response.setHeader("X-Content-Security-Policy", cspRule);
+      response.setHeader("X-Webkit-CSP", cspRule);
     }
 
     // On first response, update the session to have hasLoaded=true

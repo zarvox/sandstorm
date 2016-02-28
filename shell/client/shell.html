@@ -156,7 +156,12 @@ limitations under the License.
     {{#if appOrigin}}
       {{!-- Selenium requires iframes to have an id in order to select them. id="grain-frame" is only
             used for testing purposes. --}}
-      <iframe data-grainid="{{grainId}}" id="grain-frame" class="grain-frame" src="{{appOrigin}}/_sandstorm-init?sessionid={{sessionId}}&path={{originalPath}}"></iframe>
+      {{!-- A sandboxed iframe with both allow-scripts and allow-same-origin would ordinarily be a
+            vulnerability if you're trying to frame something from the same origin (because then the
+            framed content can reach into the parent and edit the iframe to remove the sandbox
+            attributes), but we already put apps into their own origin, so it's actually safe for us
+            to do here.  --}}
+      <iframe data-grainid="{{grainId}}" id="grain-frame" class="grain-frame" src="{{appOrigin}}/_sandstorm-init?sessionid={{sessionId}}&path={{originalPath}}" sandbox="allow-forms allow-scripts allow-same-origin"></iframe>
       {{#if hasNotLoaded}}
         {{> _grainSpinner}}
       {{/if}}
