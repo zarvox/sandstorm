@@ -1365,6 +1365,99 @@ Meteor.startup(function () {
       const requestContext = new SandstormPowerboxRequest(globalDb, powerboxRequestInfo);
       senderGrain.setPowerboxRequest(requestContext);
       globalTopbar.openPopup("request");
+    } else if (event.data.notificationRefreshPermission) {
+      // TODO: attenuate this by whether or not this grain has permission from the shell to show
+      // notifications yet or not
+      const resp = { notificationPermissionChanged: { newValue: Notification.permission } };
+      event.source.postMessage(resp, event.origin);
+    } else if (event.data.notificationRequestPermission) {
+      // TODO: check against DB if this grain is permitted to show things and if we have
+      // browser permission.  If so, shortcircuit around Notification.requestPermission.
+      Notification.requestPermission(function (perm) {
+        const resp = { notificationPermissionChanged: { newValue: Notification.permission } };
+        event.source.postMessage(resp, event.origin);
+      });
+    } else if (event.data.notificationCreate) {
+      const req = event.data.notificationCreate;
+      const notificationId = req.notificationId;
+      // Sanitize req.notificationArgs, as described in
+      // https://github.com/sandstorm-io/sandstorm/issues/919
+      // We need to verify any argument that could be a URI refers only to the grain's origin or
+      // the shell's origin.  We also don't want to pass on any options that aren't defined in the
+      // Notification spec.
+      const requestedOptions = req.notificationArgs.options || {};
+      const passthroughKeys = [
+        "dir", "lang", "body", "data", // Defined and implemented in current browsers
+        "vibrate", "renotify", "silent", "noscreen", "sticky", // Defined in specs
+      ];
+      const sanitizeKeys = ["icon", "sound"];
+      const sanitizeUri = function (uri) {
+        if (uri === undefined || uri === null) return uri;
+        // Check that scheme/host/port matches, and that the next character is a / (indicating
+        // start of the path).
+        const origin = senderGrain.origin();
+        if (uri.indexOf(origin, 0) === 0 && uri[origin.length] === "/") {
+          // Absolute URL matching the grain's origin.  Safe to pass through as-is.
+          return uri;
+        }
+
+        if (uri[0] === "/" && uri[1] !== "/") {
+          // Absolute path, no scheme/host/port.  Return the path given with grain
+          // origin prepended.
+          return origin + uri;
+        }
+
+        // TODO(someday): consider allowing protocol-relative URIs, or relative paths?
+        // Check what browser behavior is.  Relative paths may require setPath() integration to
+        // behave correctly, but I'm willing to bet that very few applications will need this.
+        console.warn("Blocked use of " + uri + " by grain " + senderGrain.grainId() + " \"" + senderGrain.title() + "\"");
+        console.log("Notifications may only use icons or sound files from their own origin, e.g. " + senderGrain.origin());
+        return undefined;
+      };
+
+      const sanitizedOptions = {};
+      for (let i = 0; i < passthroughKeys.length; i++) {
+        const key = passthroughKeys[i];
+        sanitizedOptions[key] = requestedOptions[key];
+      }
+
+      for (let i = 0; i < sanitizeKeys.length; i++) {
+        const key = sanitizeKeys[i];
+        sanitizedOptions[key] = sanitizeUri(requestedOptions[key]);
+      }
+      // Prefix the tag field with the grain ID, so apps can't interfere with each other's
+      // notifications, but can still replace their own notifications.
+      sanitizedOptions.tag = requestedOptions.tag ?
+          senderGrain.grainId() + "-" + requestedOptions.tag :
+          requestedOptions.tag;
+      const notification = new Notification(req.notificationArgs.title, sanitizedOptions);
+
+      // set up onclick and onerror to trigger postMessage replies
+      notification.onclick = function (clickEvent) {
+        // Request that the Sandstorm window receive focus.  This attempts to switch the browser's
+        // active tab and window to the Sandstorm window that requested the notification.
+        window.focus();
+        // Then, with this tab focused, activate the grain that created the notification that the
+        // user clicked.
+        Router.go(senderGrain.route());
+        const resp = { notificationClicked: { notificationId } };
+        event.source.postMessage(resp, event.origin);
+      };
+
+      notification.onerror = function (errorEvent) {
+        const resp = { notificationError: { notificationId } };
+        event.source.postMessage(resp, event.origin);
+      };
+
+      // I'm just attaching a field to the GrainView instance here - perhaps it should get public API in grainview.js?
+      senderGrain.notifications = senderGrain.notifications || {};
+      senderGrain.notifications[notificationId] = notification;
+      // No immediate reply needed.
+    } else if (event.data.notificationClose) {
+      const req = event.data.notificationClose;
+      const notification = senderGrain.notifications && senderGrain.notifications[req.notificationId];
+      notification && notification.close();
+      // No reply needed.
     } else {
       console.log("postMessage from app not understood: ", event.data);
       console.log(event);
