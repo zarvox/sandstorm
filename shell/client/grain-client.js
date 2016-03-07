@@ -581,6 +581,20 @@ Template.grain.helpers({
     return current && current.isOwner();
   },
 
+  showPermissionsButton() {
+    const current = getActiveGrain(globalGrains.get());
+    // TODO: show if:
+    // 1) The user has previously granted any special permissions to the grain, or
+    // 2) If a permissions request is currently active.
+    return current.grantedPermissions().length !== 0 || current.isPermissionRequestActive();
+  },
+
+  autoShowPermissionsRequest() {
+    // Show if a permissions request is active.
+    const current = getActiveGrain(globalGrains.get());
+    return current.isPermissionRequestActive();
+  },
+
   grainSize: function () {
     const current = globalGrains.getActive();
     const sizeBytes = current && current.size();

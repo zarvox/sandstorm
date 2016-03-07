@@ -56,6 +56,7 @@ GrainView = class GrainView {
     this._dep = new Tracker.Dependency();
 
     this._powerboxRequest = new ReactiveVar(undefined);
+    this._permissionRequests = new ReactiveVar([]);
 
     this._userIdentityId = new ReactiveVar(undefined);
     // `false` means incognito; `undefined` means we still need to decide whether to reveal
@@ -802,6 +803,30 @@ GrainView = class GrainView {
         };
       },
     };
+  }
+
+  startPermissionsRequest(permissionName) {
+    if (permissionType === "notifications") {
+      const activeRequests = this._permissionRequests.get();
+      activeRequests.push({ name: permissionName });
+      this._permissionRequests.set(activeRequests);
+    } else {
+      console.error("Unknown permission type", permissionType);
+    }
+  }
+
+  isPermissionRequestActive() {
+    return this._permissionRequests.get().length !== 0;
+  }
+
+  hasPermission(permissionName) {
+    // TODO: look in grain/apitoken
+    return false;
+  }
+
+  grantedPermissions() {
+    // TODO: actually pull this from the grain/apitoken the values are stored on
+    return [];
   }
 };
 

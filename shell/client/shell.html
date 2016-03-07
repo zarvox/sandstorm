@@ -384,6 +384,14 @@ limitations under the License.
   <button class="grain-button" title="Restart App" id="restartGrain">Restart</button>
 </template>
 
+<template name="grainPermissionsButton">
+  <button class="grain-button" title="Permissions">Permissions</button>
+</template>
+
+<template name="grainPermissionsPopup">
+  <h4>Permissions</h4>
+</template>
+
 <template name="grainApiTokenButton">
   <button class="show-popup" title="Get webkey">
     Get&nbsp;Webkey
@@ -712,6 +720,11 @@ limitations under the License.
   {{/if}}
 
   {{#if hasAccess}}
+    {{#if showPermissionsButton}}
+      {{>sandstormTopbarItem name="permissions" topbar=globalTopbar
+          template="grainPermissionsButton" popupTemplate="grainPermissionsPopup"
+          startOpen=autoShowPermissionsRequest}}
+    {{/if}}
     {{#if displayWebkeyButton}}
         {{>sandstormTopbarItem name="webkey" topbar=globalTopbar
             template="grainApiTokenButton" popupTemplate="grainApiTokenPopup"}}
