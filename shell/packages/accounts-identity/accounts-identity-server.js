@@ -131,6 +131,37 @@ Meteor.methods({
                              + accountUserId);
     }
 
+    const db = this.connection.sandstormDb;
+    const currentFeatureKey = db.currentFeatureKey();
+    const userLimit = currentFeatureKey && currentFeatureKey.userLimit;
+    const now = Date.now();
+
+    if (userLimit) {
+      // Count the accounts that were active this month.
+      const MONTH_MSEC = 30 * 24 * 60 * 60 * 1000;
+      const oneMonthAgoMsec = now - MONTH_MSEC;
+      const then = new Date(oneMonthAgoMsec);
+      const usersActiveThisMonthCount = db.activeUsersSinceDate(then).count();
+      if (usersActiveThisMonthCount >= userLimit &&
+              (!(accountUser.lastActive > then)) &&
+              !accountUser.isAdmin) {
+        // Deny login.
+        // TODO(soon): If we haven't done so recently, notify all admins that the feature key user
+        // limit was reached?
+        throw new Meteor.Error(402, "Feature key user limit reached.  " +
+                "Please ask your administrator to contact sales@sandstorm.io to upgrade to a larger plan.");
+      }
+    }
+
+    // Mark this account as last active now, then log them in.
+    db.collections.users.update({
+      _id: accountUserId,
+    }, {
+      $set: {
+        lastActive: new Date(now),
+      },
+    });
+
     return Accounts._loginMethod(this, "loginWithIdentity", [accountUserId],
                                  "identity", function () { return { userId: accountUserId }; });
   },
