@@ -1987,6 +1987,24 @@ if (Meteor.isServer) {
     }
   };
 
+  SandstormDb.prototype.activeUsersSinceDate = function (then) {
+    return this.collections.users.find({
+      $or: [
+        {
+          // Count accounts that were last active within the past ~month
+          loginIdentities: { $exists: true },
+          lastActive: { $gt: then },
+        }, {
+          // Note: admin accounts are always considered active, to avoid a situation where an
+          // admin can't log in to upgrade the feature key to allow other users to log in.
+          // Replacing the feature key from an admin-token session is also possible, but I'm not
+          // sure you can get there without knowing the URL in advance.
+          isAdmin: true,
+        },
+      ],
+    });
+  };
+
   Meteor.publish("keybaseProfile", function (keyFingerprint) {
     check(keyFingerprint, ValidKeyFingerprint);
     const db = this.connection.sandstormDb;
