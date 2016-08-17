@@ -17,6 +17,7 @@
 import "/imports/db-deprecated.js";
 import { FrontendRefRegistry } from "/imports/server/frontend-ref.js";
 import { PersistentImpl } from "/imports/server/persistent.js";
+import { registerIpNetworkOn, registerIpInterfaceOn } from "/imports/server/drivers/ip.js";
 
 globalFrontendRefRegistry = new FrontendRefRegistry();
 

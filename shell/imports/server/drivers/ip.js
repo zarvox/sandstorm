@@ -295,7 +295,7 @@ class IpInterfaceImpl extends PersistentImpl {
   }
 };
 
-registerIpNetworkOn = function (frontendRefRegistry) {
+const registerIpNetworkOn = function (frontendRefRegistry) {
   frontendRefRegistry.register({
     frontendRefField: "ipNetwork",
     typeId: IpRpc.IpNetwork.typeId,
@@ -334,7 +334,7 @@ registerIpNetworkOn = function (frontendRefRegistry) {
   });
 };
 
-registerIpInterfaceOn = function (frontendRefRegistry) {
+const registerIpInterfaceOn = function (frontendRefRegistry) {
   frontendRefRegistry.register({
     frontendRefField: "ipInterface",
     typeId: IpRpc.IpInterface.typeId,
@@ -372,3 +372,5 @@ registerIpInterfaceOn = function (frontendRefRegistry) {
     },
   });
 };
+
+export { registerIpNetworkOn, registerIpInterfaceOn };
