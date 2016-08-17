@@ -20,7 +20,10 @@ import { PersistentImpl } from "/imports/server/persistent.js";
 
 globalFrontendRefRegistry = new FrontendRefRegistry();
 
+// TODO(cleanup): make all frontendref registrations be functions and call them here.
 SandstormPowerbox.registerUiViewQueryHandler(globalFrontendRefRegistry);
+registerIpNetworkOn(globalFrontendRefRegistry);
+registerIpInterfaceOn(globalFrontendRefRegistry);
 
 if (global.BlackrockPayments && BlackrockPayments.registerPaymentsApi) {
   // TODO(cleanup): Meteor.startup() needed because unwrapFrontendCap is not defined yet when this

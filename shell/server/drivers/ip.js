@@ -295,10 +295,8 @@ class IpInterfaceImpl extends PersistentImpl {
   }
 };
 
-// TODO(cleanup): Meteor.startup() needed because 00-startup.js runs *after* code in subdirectories
-//   (ugh).
-Meteor.startup(() => {
-  globalFrontendRefRegistry.register({
+registerIpNetworkOn = function (frontendRefRegistry) {
+  frontendRefRegistry.register({
     frontendRefField: "ipNetwork",
     typeId: IpRpc.IpNetwork.typeId,
 
@@ -334,10 +332,10 @@ Meteor.startup(() => {
       }
     },
   });
-});
+};
 
-Meteor.startup(() => {
-  globalFrontendRefRegistry.register({
+registerIpInterfaceOn = function (frontendRefRegistry) {
+  frontendRefRegistry.register({
     frontendRefField: "ipInterface",
     typeId: IpRpc.IpInterface.typeId,
 
@@ -373,5 +371,4 @@ Meteor.startup(() => {
       }
     },
   });
-});
-
+};
