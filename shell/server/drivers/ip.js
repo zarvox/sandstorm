@@ -23,7 +23,11 @@ const Capnp = Npm.require("capnp");
 
 const IpRpc = Capnp.importSystem("sandstorm/ip.capnp");
 
-ByteStreamConnection = class ByteStreamConnection{
+const errorWrite = (data) => {
+  throw new Error("error occurred in connection");
+};
+
+class ByteStreamConnection {
   constructor(connection) {
     this.connection = connection;
   }
@@ -38,6 +42,176 @@ ByteStreamConnection = class ByteStreamConnection{
 
   // expectSize not implemented
   // expectSize(size) { }
+};
+
+class BoundUdpPortImpl {
+  constructor(server, address, port) {
+    this.server = server;
+    this.address = address;
+    this.port = port;
+  }
+
+  send(message, returnPort) {
+    // TODO(someday): this whole class is a hack to deal with the fact that we can't compare
+    // capabilities or build a map with them. What we should be doing is mapping all ports to
+    // their raw physical address/port, and using that here
+    this.server.send(message, 0, message.length, this.port, this.address);
+  }
+};
+
+const bits16 = Bignum(1).shiftLeft(16).sub(1);
+const bits32 = Bignum(1).shiftLeft(32).sub(1);
+
+const intToIpv4 = (num) => {
+  const part1 = num & 255;
+  const part2 = ((num >> 8) & 255);
+  const part3 = ((num >> 16) & 255);
+  const part4 = ((num >> 24) & 255);
+
+  return part4 + "." + part3 + "." + part2 + "." + part1;
+};
+
+const addressToString = (address) => {
+  const ipv6num = Bignum(address.upper64).shiftLeft(64).add(Bignum(address.lower64));
+
+  if (ipv6num.shiftRight(32).eq(bits16)) {
+    // this is an ipv4 address, we should return it as such
+    const ipv4num = ipv6num.and(bits32).toNumber();
+    return intToIpv4(ipv4num);
+  }
+
+  const hex = ipv6num.toString(16);
+  let numColons = 0;
+  let out = "";
+
+  for (let i = 0; i < hex.length; ++i) {
+    // start with lower bits of address and build the output in reverse
+    // this ensures that we can place a colon every 4 characters
+    out += hex[hex.length - 1 - i];
+    if ((i + 1) % 4 === 0) {
+      out += ":";
+      ++numColons;
+    }
+  }
+
+  // Double colon represents all bits being 0
+  if (numColons < 7) {
+    out += "::";
+  }
+
+  return out.split("").reverse().join("");
+};
+
+const addressType = (address) => {
+  let type = "udp4";
+
+  // Check if it's an ipv6 address
+  // TODO(someday): make this less hacky and change address to explicitly pass this information
+  if (address.indexOf(":") != -1) {
+    type = "udp6";
+  }
+
+  return type;
+};
+
+class TcpPortImpl {
+  constructor(address, portNum) {
+    this.address = address;
+    this.port = portNum;
+  }
+
+  connect(downstream) {
+    const _this = this;
+    let resolved = false;
+    return new Promise((resolve, reject) => {
+      const client = Net.connect({ host: _this.address, port: _this.port }, () => {
+        resolved = true;
+        resolve({ upstream: new ByteStreamConnection(client) });
+      });
+
+      client.on("data", (data) => {
+        downstream.write(data);
+      });
+
+      client.on("close", (hadError) => {
+        downstream.done();
+      });
+
+      client.on("error", (err) => {
+        if (resolved) {
+          client.write = errorWrite;
+        } else {
+          // upstream hasn't been resolved yet, so it's safe to reject
+          reject(err);
+        }
+      });
+    });
+  }
+};
+
+class UdpPortImpl {
+  constructor(address, portNum) {
+    this.address = address;
+    this.port = portNum;
+
+    const type = addressType(address);
+    this.socket = Dgram.createSocket(type);
+
+    // TODO(someday): close socket after a certain time of inactivity?
+    // This may be pointless since grains are killed frequently when not in use anyways
+
+    // Temporary hack. We only expect clients to pass in a single return port, so we'll store it
+    // and only send replies here.
+    // This will be changed to be correct when equality comparisons are added to capabilities.
+    this.returnPort = null;
+
+    const _this = this;
+    this.socket.on("message", (msg, rinfo) => {
+      if (_this.returnPort) {
+        _this.returnPort.send(msg, _this);
+      }
+    });
+  }
+
+  send(message, returnPort) {
+    this.returnPort = returnPort;
+    this.socket.send(message, 0, message.length, this.port, this.address);
+
+    // TODO(someday): use callback to catch errors and do something with them
+  }
+};
+
+class IpRemoteHostImpl {
+  constructor(address) {
+    if (address.upper64 || address.upper64 === 0) {
+      // address is an ip.capnp:IpAddress, we need to convert it
+      this.address = addressToString(address);
+    } else {
+      this.address = address;
+    }
+  }
+
+  getTcpPort(portNum) {
+    return { port: new TcpPortImpl(this.address, portNum) };
+  }
+
+  getUdpPort(portNum) {
+    return { port: new UdpPortImpl(this.address, portNum) };
+  }
+};
+
+class IpNetworkImpl extends PersistentImpl {
+  constructor(db, saveTemplate) {
+    super(db, saveTemplate);
+  }
+
+  getRemoteHost(address) {
+    return { host: new IpRemoteHostImpl(address) };
+  }
+
+  getRemoteHostByName(address) {
+    return { host: new IpRemoteHostImpl(address) };
+  }
 };
 
 class IpInterfaceImpl extends PersistentImpl {
@@ -125,131 +299,6 @@ class IpInterfaceImpl extends PersistentImpl {
 //   (ugh).
 Meteor.startup(() => {
   globalFrontendRefRegistry.register({
-    frontendRefField: "ipInterface",
-    typeId: IpRpc.IpInterface.typeId,
-
-    restore(db, saveTemplate) {
-      return new Capnp.Capability(new IpInterfaceImpl(db, saveTemplate),
-                                  IpRpc.PersistentIpInterface);
-    },
-
-    validate(db, session, value) {
-      check(value, true);
-
-      if (!session.userId) {
-        throw new Meteor.Error(403, "Not logged in.");
-      }
-
-      return {
-        descriptor: { tags: [{ id: IpRpc.IpInterface.typeId }] },
-        requirements: [{ userIsAdmin: session.userId }],
-      };
-    },
-
-    query(db, userId, value) {
-      if (userId && Meteor.users.findOne(userId).isAdmin) {
-        return [
-          {
-            _id: "frontendref-ipinterface",
-            frontendRef: { ipInterface: true },
-            cardTemplate: "ipInterfacePowerboxCard",
-          },
-        ];
-      } else {
-        return [];
-      }
-    },
-  });
-});
-
-BoundUdpPortImpl = class BoundUdpPortImpl {
-  constructor(server, address, port) {
-    this.server = server;
-    this.address = address;
-    this.port = port;
-  }
-
-  send(message, returnPort) {
-    // TODO(someday): this whole class is a hack to deal with the fact that we can't compare
-    // capabilities or build a map with them. What we should be doing is mapping all ports to
-    // their raw physical address/port, and using that here
-    this.server.send(message, 0, message.length, this.port, this.address);
-  }
-};
-
-const bits16 = Bignum(1).shiftLeft(16).sub(1);
-const bits32 = Bignum(1).shiftLeft(32).sub(1);
-
-const intToIpv4 = (num) => {
-  const part1 = num & 255;
-  const part2 = ((num >> 8) & 255);
-  const part3 = ((num >> 16) & 255);
-  const part4 = ((num >> 24) & 255);
-
-  return part4 + "." + part3 + "." + part2 + "." + part1;
-};
-
-const addressToString = (address) => {
-  const ipv6num = Bignum(address.upper64).shiftLeft(64).add(Bignum(address.lower64));
-
-  if (ipv6num.shiftRight(32).eq(bits16)) {
-    // this is an ipv4 address, we should return it as such
-    const ipv4num = ipv6num.and(bits32).toNumber();
-    return intToIpv4(ipv4num);
-  }
-
-  const hex = ipv6num.toString(16);
-  let numColons = 0;
-  let out = "";
-
-  for (let i = 0; i < hex.length; ++i) {
-    // start with lower bits of address and build the output in reverse
-    // this ensures that we can place a colon every 4 characters
-    out += hex[hex.length - 1 - i];
-    if ((i + 1) % 4 === 0) {
-      out += ":";
-      ++numColons;
-    }
-  }
-
-  // Double colon represents all bits being 0
-  if (numColons < 7) {
-    out += "::";
-  }
-
-  return out.split("").reverse().join("");
-};
-
-const addressType = (address) => {
-  let type = "udp4";
-
-  // Check if it's an ipv6 address
-  // TODO(someday): make this less hacky and change address to explicitly pass this information
-  if (address.indexOf(":") != -1) {
-    type = "udp6";
-  }
-
-  return type;
-};
-
-class IpNetworkImpl extends PersistentImpl {
-  constructor(db, saveTemplate) {
-    super(db, saveTemplate);
-  }
-
-  getRemoteHost(address) {
-    return { host: new IpRemoteHostImpl(address) };
-  }
-
-  getRemoteHostByName(address) {
-    return { host: new IpRemoteHostImpl(address) };
-  }
-};
-
-// TODO(cleanup): Meteor.startup() needed because 00-startup.js runs *after* code in subdirectories
-//   (ugh).
-Meteor.startup(() => {
-  globalFrontendRefRegistry.register({
     frontendRefField: "ipNetwork",
     typeId: IpRpc.IpNetwork.typeId,
 
@@ -287,93 +336,42 @@ Meteor.startup(() => {
   });
 });
 
-IpRemoteHostImpl = class IpRemoteHostImpl {
-  constructor(address) {
-    if (address.upper64 || address.upper64 === 0) {
-      // address is an ip.capnp:IpAddress, we need to convert it
-      this.address = addressToString(address);
-    } else {
-      this.address = address;
-    }
-  }
+Meteor.startup(() => {
+  globalFrontendRefRegistry.register({
+    frontendRefField: "ipInterface",
+    typeId: IpRpc.IpInterface.typeId,
 
-  getTcpPort(portNum) {
-    return { port: new TcpPortImpl(this.address, portNum) };
-  }
+    restore(db, saveTemplate) {
+      return new Capnp.Capability(new IpInterfaceImpl(db, saveTemplate),
+                                  IpRpc.PersistentIpInterface);
+    },
 
-  getUdpPort(portNum) {
-    return { port: new UdpPortImpl(this.address, portNum) };
-  }
-};
+    validate(db, session, value) {
+      check(value, true);
 
-TcpPortImpl = class TcpPortImpl {
-  constructor(address, portNum) {
-    this.address = address;
-    this.port = portNum;
-  }
-
-  connect(downstream) {
-    const _this = this;
-    let resolved = false;
-    return new Promise((resolve, reject) => {
-      const client = Net.connect({ host: _this.address, port: _this.port }, () => {
-        resolved = true;
-        resolve({ upstream: new ByteStreamConnection(client) });
-      });
-
-      client.on("data", (data) => {
-        downstream.write(data);
-      });
-
-      client.on("close", (hadError) => {
-        downstream.done();
-      });
-
-      client.on("error", (err) => {
-        if (resolved) {
-          client.write = errorWrite;
-        } else {
-          // upstream hasn't been resolved yet, so it's safe to reject
-          reject(err);
-        }
-      });
-    });
-  }
-};
-
-const errorWrite = (data) => {
-  throw new Error("error occurred in connection");
-};
-
-UdpPortImpl = class UdpPortImpl {
-  constructor(address, portNum) {
-    this.address = address;
-    this.port = portNum;
-
-    const type = addressType(address);
-    this.socket = Dgram.createSocket(type);
-
-    // TODO(someday): close socket after a certain time of inactivity?
-    // This may be pointless since grains are killed frequently when not in use anyways
-
-    // Temporary hack. We only expect clients to pass in a single return port, so we'll store it
-    // and only send replies here.
-    // This will be changed to be correct when equality comparisons are added to capabilities.
-    this.returnPort = null;
-
-    const _this = this;
-    this.socket.on("message", (msg, rinfo) => {
-      if (_this.returnPort) {
-        _this.returnPort.send(msg, _this);
+      if (!session.userId) {
+        throw new Meteor.Error(403, "Not logged in.");
       }
-    });
-  }
 
-  send(message, returnPort) {
-    this.returnPort = returnPort;
-    this.socket.send(message, 0, message.length, this.port, this.address);
+      return {
+        descriptor: { tags: [{ id: IpRpc.IpInterface.typeId }] },
+        requirements: [{ userIsAdmin: session.userId }],
+      };
+    },
 
-    // TODO(someday): use callback to catch errors and do something with them
-  }
-};
+    query(db, userId, value) {
+      if (userId && Meteor.users.findOne(userId).isAdmin) {
+        return [
+          {
+            _id: "frontendref-ipinterface",
+            frontendRef: { ipInterface: true },
+            cardTemplate: "ipInterfacePowerboxCard",
+          },
+        ];
+      } else {
+        return [];
+      }
+    },
+  });
+});
 
